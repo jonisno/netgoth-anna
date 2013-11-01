@@ -1,4 +1,4 @@
 netgoth-anna
 ============
 
-Anna bot for netgoth, {}{}{
+Anna bot for netgoth.

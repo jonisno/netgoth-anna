@@ -246,19 +246,19 @@ sub db_add_quote {
 }
 
 sub db_get_url {
-  return $db->selectrow_hashref("select * from $c->{url_table} where reported = false order by random() limit 1")
+  return $db->selectrow_hashref("select * from $c->{url_table} where active = true order by random() limit 1")
     || $log->logdie("DB: could not get row from database. Bye!");
 }
 
 sub db_get_total {
-  my $total = $db->selectrow_hashref("select count(*) from $c->{url_table} where reported = false")
+  my $total = $db->selectrow_hashref("select count(*) from $c->{url_table} where active = true")
     || $log->logdie("DB: could not get count from database. Bye!");
   return $total->{count};
 }
 
 sub db_get_top_domains {
   my $topdomains = $db->selectall_arrayref(
-    "select domain, count(*) from $c->{url_table} where reported = false group by domain order by count desc limit 5")
+    "select domain, count(*) from $c->{url_table} where active = true group by domain order by count desc limit 5")
     || $log->logdie("DB: could not get top domains. Bye!");
   return $topdomains;
 }
@@ -274,7 +274,7 @@ sub db_insert_url {
 
 sub db_mark_reported {
   my ($id) = @_;
-  my $pst = $db->prepare("update $c->{url_table} set reported = true where id_number = ?");
+  my $pst = $db->prepare("update $c->{url_table} set active = false where id_number = ?");
   $pst->execute($id) || $log->logdie("DB, could not disable $id. Bye!");
   $pst->finish();
 }

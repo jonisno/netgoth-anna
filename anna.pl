@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-package No::Jonis::IRC::Logger;
+package Orgy;
 
 # This is written entirely in YOLOCODE, if you were wondering
 use strict;
@@ -20,7 +20,7 @@ use Log::Log4perl;
 
 # Current bot version
 
-my $V = '1.2.2';
+my $V = '1.2.4';
 
 # start logging
 
@@ -121,21 +121,35 @@ sub channel_msg {
   my $userhost = ( split /!/, $who )[1];
   $channel = $channel->[0];
 
-  if ( $msg =~ m/(https?:\/\/[a-z0-9\.-]+[a-z]{2,6}([\/\w+-_&\?=]*))/i ) {
+  my @cmds = ( split / /, $msg );
+
+  if ( $msg =~ /(https?:\/\/[a-z0-9\.-]+[a-z]{2,6}([\/\w+-_&\?=]*))/i ) {
     my $link   = $1;
     my $domain = $link;
     $domain =~ s/.*:\/\/([^\/]*)/$1/;
     db_insert_url( $username, $channel, $link, $domain );
   }
 
-  elsif ( ( split / /, $msg )[0] eq "$c->{irc_trigger}" ) {
-    handle_triggercmd( $username, $channel, my @cmds = ( split / /, $msg ) );
+  elsif ( $msg =~ /(\w+\+\+)/i ) { add_karma($1); }
+  elsif ( $msg =~ /(\w+--)/i )   { add_karma($1); }
+  elsif ( $cmds[0] eq $c->{irc_quote_trigger} ) { handle_quote( $username, $channel, @cmds ); }
+  elsif ( $cmds[0] eq $c->{irc_url_trigger} ) { handle_url( $username, $channel, @cmds ); }
+  elsif ( $cmds[0] eq $c->{irc_karma_trigger} ) { get_karma( $channel, @cmds ) }
+}
+
+# This handles quote commands
+
+sub handle_quote {
+  my ( $who, $channel, @cmds ) = @_;
+  if ( scalar @cmds eq 1 ) {
+    my $result = db_get_quote();
+    $irc->yield( privmsg => $channel, $result->{quote} );
   }
 }
 
-# This handles all the trigger commands.
+# This handles all the url commands.
 
-sub handle_triggercmd {
+sub handle_url {
   my ( $who, $channel, @cmds ) = @_;
 
   if ( scalar @cmds eq 1 ) {    # grab single url and post to channel
@@ -186,7 +200,36 @@ sub handle_triggercmd {
   }
 }
 
+# Handles karma stuff
+
+sub add_karma {
+  my ($msg) = @_;
+  my $score;
+  my $value;
+  if ( $msg =~ /(\w+)\+\+/i ) {
+    $score = 1;
+    $value = lc substr( $1, 0, ( length $msg ) - 2 );
+    db_add_karma( $value, $score );
+  }
+  elsif ( $msg =~ /(\w+)--/i ) {
+    $value = lc substr( $1, 0, ( length $msg ) - 2 );
+    $score = -1;
+    db_add_karma( $value, $score );
+  }
+}
+
+sub get_karma {
+  my ( $channel,@cmds ) = @_;
+  my $result = db_get_karma( lc $cmds[1] );
+  $irc->yield( privmsg => $channel, "$result->{value} has $result->{sum} karma." );
+}
+
 # It's DB all the way down.
+
+sub db_get_quote {
+  return $db->selectrow_hashref("select * from quotes order by random() limit 1")
+    || $log->logdie("DB: could not get quote from database. Bye!");
+}
 
 sub db_get_url {
   return $db->selectrow_hashref("select * from logger where reported = false order by random() limit 1")
@@ -226,6 +269,22 @@ sub db_search_url {
   my ($search) = @_;
   my $pst = $db->prepare("select url,id_number from logger where url ~ ? order by random() limit 1");
   $pst->execute($search) || $log->logdie("DB, could no search. Bye!");
+  my $row = $pst->fetchrow_hashref;
+  $pst->finish();
+  return $row;
+}
+
+sub db_add_karma {
+  my ( $item, $score ) = @_;
+  my $pst = $db->prepare("insert into bot_karma(value,score) values (?,?)");
+  $pst->execute( $item, $score );
+  $pst->finish();
+}
+
+sub db_get_karma {
+  my ($item) = @_;
+  my $pst = $db->prepare("select value,sum(score) from bot_karma where value = ? group by value");
+  $pst->execute($item);
   my $row = $pst->fetchrow_hashref;
   $pst->finish();
   return $row;

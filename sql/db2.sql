@@ -13,8 +13,8 @@ create table bot_url_log (
   url       text unique not null unique,
   domain    text not null,
   channel   varchar(200),
-  first_added_on  timestamp default now() not null,
-  active    boolean default true not null,
+  time      timestamp default now() not null,
+  disabled  boolean default false,
   primary key(id)
 );
 

@@ -160,13 +160,13 @@ sub handle_url {
     my $response = $ua->get( $result->{url} );
 
     while ( $response->is_error ) {
-      $log->info("$result->{id_number} marked as invalid URL due to HTTP response code");
-      db_mark_reported( $result->{id_number} );
+      $log->info("$result->{id} marked as invalid URL due to HTTP response code");
+      db_mark_reported( $result->{id} );
       $result   = db_get_url();
       $response = $ua->get( $result->{url} );
     }
 
-    $irc->yield( privmsg => $channel, "$who: $result->{url} ($result->{id_number})" );
+    $irc->yield( privmsg => $channel, "$who: $result->{url} ($result->{id})" );
   }
   else {
     if ( $cmds[1] =~ m/^total$/i ) {
@@ -194,7 +194,7 @@ sub handle_url {
     else {
       my $result = &db_search_url( $cmds[1] );
       if ( defined $result ) {
-        $irc->yield( privmsg => $channel, "$who: $result->{url} ($result->{id_number})" );
+        $irc->yield( privmsg => $channel, "$who: $result->{url} ($result->{id})" );
       }
       else {
         $irc->yield( privmsg => $channel, "$who: Sorry, nothing found for $cmds[1]" );
@@ -246,19 +246,19 @@ sub db_add_quote {
 }
 
 sub db_get_url {
-  return $db->selectrow_hashref("select * from $c->{url_table} where active = true order by random() limit 1")
+  return $db->selectrow_hashref("select * from $c->{url_table} where disabled = false order by random() limit 1")
     || $log->logdie("DB: could not get row from database. Bye!");
 }
 
 sub db_get_total {
-  my $total = $db->selectrow_hashref("select count(*) from $c->{url_table} where active = true")
+  my $total = $db->selectrow_hashref("select count(*) from $c->{url_table} where disabled = false")
     || $log->logdie("DB: could not get count from database. Bye!");
   return $total->{count};
 }
 
 sub db_get_top_domains {
   my $topdomains = $db->selectall_arrayref(
-    "select domain, count(*) from $c->{url_table} where active = true group by domain order by count desc limit 5")
+    "select domain, count(*) from $c->{url_table} where disabled = false group by domain order by count desc limit 5")
     || $log->logdie("DB: could not get top domains. Bye!");
   return $topdomains;
 }
@@ -274,14 +274,14 @@ sub db_insert_url {
 
 sub db_mark_reported {
   my ($id) = @_;
-  my $pst = $db->prepare("update $c->{url_table} set active = false where id_number = ?");
+  my $pst = $db->prepare("update $c->{url_table} set disabled = true where id = ?");
   $pst->execute($id) || $log->logdie("DB, could not disable $id. Bye!");
   $pst->finish();
 }
 
 sub db_search_url {
   my ($search) = @_;
-  my $pst = $db->prepare("select url,id_number from $c->{url_table} where url ~ ? order by random() limit 1");
+  my $pst = $db->prepare("select url,id from $c->{url_table} where url ~ ? order by random() limit 1");
   $pst->execute($search) || $log->logdie("DB, could no search. Bye!");
   my $row = $pst->fetchrow_hashref;
   $pst->finish();

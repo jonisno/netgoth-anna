@@ -13,11 +13,6 @@ use DBI;
 use LWP::UserAgent;
 use Log::Log4perl;
 
-#For future use.
-
-#use FindBin;
-#use lib "$FindBin::Bin/lib";
-
 # Current bot version
 
 my $V = '1.2.4';
@@ -34,7 +29,7 @@ my $c = Config::YAML->new( config => './conf/config.yml' );
 #Open DB connection.
 
 my $db =
-  DBI->connect( "DBI:" . $c->{dbtype} . ":database=" . $c->{dbname}, $c->{dbuser}, $c->{dbpass}, { AutoCommit => 1 } )
+  DBI->connect( "DBI:$c->{dbtype}:database=$c->{dbname}", $c->{dbuser}, $c->{dbpass}, { AutoCommit => 1 } )
   || $log->logdie($DBI::errstr);
 
 # Initialize useragent.
@@ -132,20 +127,28 @@ sub channel_msg {
 
   elsif ( $msg =~ /(\w+\+\+)/i ) { add_karma($1); }
   elsif ( $msg =~ /(\w+--)/i )   { add_karma($1); }
-  elsif ( $cmds[0] eq $c->{irc_quote_trigger} ) { handle_quote( $username, $channel, @cmds ); }
+  elsif ( $cmds[0] eq $c->{irc_quote_trigger} ) { get_quote( $username, $channel, @cmds ); }
+  elsif ( $cmds[0] eq $c->{irc_addquote_trigger} ) { add_quote( $username, $msg ); }
   elsif ( $cmds[0] eq $c->{irc_url_trigger} ) { handle_url( $username, $channel, @cmds ); }
-  elsif ( $cmds[0] eq $c->{irc_karma_trigger} ) { get_karma( $channel, @cmds ) }
+  elsif ( $cmds[0] eq $c->{irc_karma_trigger} ) { get_karma( $channel, @cmds ); }
 }
 
 # This handles quote commands
 
-sub handle_quote {
+sub get_quote {
   my ( $who, $channel, @cmds ) = @_;
   if ( scalar @cmds eq 1 ) {
     my $result = db_get_quote();
     $irc->yield( privmsg => $channel, $result->{quote} );
   }
 }
+
+sub add_quote {
+  my ( $who, $msg ) = @_;
+  my $quote = substr( $msg, ( (length $c->{irc_addquote_trigger}) + 1 ), length $msg );
+  db_add_quote( $who, $quote );
+}
+
 
 # This handles all the url commands.
 
@@ -183,9 +186,9 @@ sub handle_url {
     elsif ( $cmds[1] =~ /^(help|commands)$/i ) {
       $irc->yield(
         privmsg => $channel,
-        "$who: Available commands are $c->{irc_trigger}, "
-          . "$c->{irc_trigger} total for stats, $c->{irc_trigger} report NUMBER "
-          . "to report a dead link or $c->{irc_trigger} WORD to search for a link."
+        "$who: Available commands are $c->{irc_url_trigger}, "
+          . "$c->{irc_url_trigger} total for stats, $c->{irc_url_trigger} report NUMBER "
+          . "to report a dead link or $c->{irc_url_trigger} WORD to search for a link."
       );
     }
     else {
@@ -219,32 +222,43 @@ sub add_karma {
 }
 
 sub get_karma {
-  my ( $channel,@cmds ) = @_;
+  my ( $channel, @cmds ) = @_;
   my $result = db_get_karma( lc $cmds[1] );
-  $irc->yield( privmsg => $channel, "$result->{value} has $result->{sum} karma." );
+  if (defined $result) {
+    $irc->yield( privmsg => $channel, "$result->{value} has $result->{sum} karma." );
+  } else {
+    $irc->yield( privmsg => $channel, "$cmds[1] has no karma yet.");
+  }
 }
 
 # It's DB all the way down.
 
 sub db_get_quote {
-  return $db->selectrow_hashref("select * from quotes order by random() limit 1")
+  return $db->selectrow_hashref("select * from $c->{quote_table} order by random() limit 1")
     || $log->logdie("DB: could not get quote from database. Bye!");
 }
 
+sub db_add_quote {
+  my ($who,$quote) = @_;
+  my $pst = $db->prepare("insert into $c->{quote_table}(added_by,quote) values (?,?)");
+  $pst->execute($who,$quote);
+  $pst->finish();
+}
+
 sub db_get_url {
-  return $db->selectrow_hashref("select * from logger where reported = false order by random() limit 1")
+  return $db->selectrow_hashref("select * from $c->{url_table} where reported = false order by random() limit 1")
     || $log->logdie("DB: could not get row from database. Bye!");
 }
 
 sub db_get_total {
-  my $total = $db->selectrow_hashref("select count(*) from logger where reported = false")
+  my $total = $db->selectrow_hashref("select count(*) from $c->{url_table} where reported = false")
     || $log->logdie("DB: could not get count from database. Bye!");
   return $total->{count};
 }
 
 sub db_get_top_domains {
   my $topdomains = $db->selectall_arrayref(
-    "select domain, count(*) from logger where reported = false group by domain order by count desc limit 5")
+    "select domain, count(*) from $c->{url_table} where reported = false group by domain order by count desc limit 5")
     || $log->logdie("DB: could not get top domains. Bye!");
   return $topdomains;
 }
@@ -252,7 +266,7 @@ sub db_get_top_domains {
 sub db_insert_url {
   my ( $user, $channel, $url, $domain ) = @_;
   my $pst = $db->prepare(
-"insert into logger (nickname,url,channel,domain) select ?,?,?,? where not exists (select 1 from logger where url = ?)"
+"insert into $c->{url_table} (nickname,url,channel,domain) select ?,?,?,? where not exists (select 1 from logger where url = ?)"
   );
   $pst->execute( $user, $url, $channel, $domain, $url ) || $log->logdie("DB: could not insert $url . Bye!");
   $pst->finish();
@@ -260,14 +274,14 @@ sub db_insert_url {
 
 sub db_mark_reported {
   my ($id) = @_;
-  my $pst = $db->prepare("update logger set reported = true where id_number = ?");
+  my $pst = $db->prepare("update $c->{url_table} set reported = true where id_number = ?");
   $pst->execute($id) || $log->logdie("DB, could not disable $id. Bye!");
   $pst->finish();
 }
 
 sub db_search_url {
   my ($search) = @_;
-  my $pst = $db->prepare("select url,id_number from logger where url ~ ? order by random() limit 1");
+  my $pst = $db->prepare("select url,id_number from $c->{url_table} where url ~ ? order by random() limit 1");
   $pst->execute($search) || $log->logdie("DB, could no search. Bye!");
   my $row = $pst->fetchrow_hashref;
   $pst->finish();
@@ -276,14 +290,14 @@ sub db_search_url {
 
 sub db_add_karma {
   my ( $item, $score ) = @_;
-  my $pst = $db->prepare("insert into bot_karma(value,score) values (?,?)");
+  my $pst = $db->prepare("insert into $c->{karma_table}(value,score) values (?,?)");
   $pst->execute( $item, $score );
   $pst->finish();
 }
 
 sub db_get_karma {
   my ($item) = @_;
-  my $pst = $db->prepare("select value,sum(score) from bot_karma where value = ? group by value");
+  my $pst = $db->prepare("select value,sum(score) from $c->{karma_table} where value = ? group by value");
   $pst->execute($item);
   my $row = $pst->fetchrow_hashref;
   $pst->finish();

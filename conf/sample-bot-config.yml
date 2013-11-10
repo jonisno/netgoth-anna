@@ -12,4 +12,5 @@ irc_port: irc_server_port
 irc_server: irc.example.com
 irc_url_trigger: '!trigger'
 irc_quote_trigger: '!quote'
+irc_karma_trigger: '!karma'
 irc_username: account_username

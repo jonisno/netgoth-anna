@@ -1,5 +1,4 @@
 #!/usr/bin/env perl
-package Orgy;
 
 # This is written entirely in YOLOCODE, if you were wondering
 use strict;
@@ -47,7 +46,7 @@ POE::Session->create(
     irc_socketerr    => \&bot_reconnect,
     irc_001          => \&bot_connected,
     irc_public       => \&channel_msg,
-    irc_msg          => \&private_message,
+#    irc_msg          => \&private_message,
     irc_ctcp_version => \&bot_ctcp_version,
     irc_ctcp_ping    => \&bot_ctcp_ping,
   }
@@ -125,8 +124,8 @@ sub channel_msg {
     db_insert_url( $username, $channel, $link, $domain );
   }
 
-  elsif ( $msg =~ /(\w+\+\+)/i ) { add_karma($1); }
-  elsif ( $msg =~ /(\w+--)/i )   { add_karma($1); }
+  elsif ( $msg =~ /(\w+\+\+)/i ) { add_karma($1,$username); }
+  elsif ( $msg =~ /(\w+--)/i )   { add_karma($1,$username); }
   elsif ( $cmds[0] eq $c->{irc_quote_trigger} ) { get_quote( $username, $channel, @cmds ); }
   elsif ( $cmds[0] eq $c->{irc_addquote_trigger} ) { add_quote( $username, $msg ); }
   elsif ( $cmds[0] eq $c->{irc_url_trigger} ) { handle_url( $username, $channel, @cmds ); }
@@ -206,18 +205,22 @@ sub handle_url {
 # Handles karma stuff
 
 sub add_karma {
-  my ($msg) = @_;
+  my ($msg,$who) = @_;
   my $score;
   my $value;
   if ( $msg =~ /(\w+)\+\+/i ) {
     $score = 1;
     $value = lc substr( $1, 0, ( length $msg ) - 2 );
-    db_add_karma( $value, $score );
+    if (lc $value ne lc $who ) {
+      db_add_karma( $value, $score );
+    }
   }
   elsif ( $msg =~ /(\w+)--/i ) {
     $value = lc substr( $1, 0, ( length $msg ) - 2 );
     $score = -1;
-    db_add_karma( $value, $score );
+    if (lc $value ne lc $who) {
+      db_add_karma( $value, $score );
+    }
   }
 }
 

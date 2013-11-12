@@ -269,7 +269,7 @@ sub db_get_top_domains {
 sub db_insert_url {
   my ( $user, $channel, $url, $domain ) = @_;
   my $pst = $db->prepare(
-"insert into $c->{url_table} (nickname,url,channel,domain) select ?,?,?,? where not exists (select 1 from logger where url = ?)"
+"insert into $c->{url_table} (nickname,url,channel,domain) select ?,?,?,? where not exists (select 1 from $c->{url_table} where url = ?)"
   );
   $pst->execute( $user, $url, $channel, $domain, $url ) || $log->logdie("DB: could not insert $url . Bye!");
   $pst->finish();

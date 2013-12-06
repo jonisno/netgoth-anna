@@ -126,6 +126,7 @@ sub channel_msg {
 
   elsif ( $msg =~ /(\w+\+\+)/i ) { add_karma($1,$username); }
   elsif ( $msg =~ /(\w+--)/i )   { add_karma($1,$username); }
+  elsif ( $cmds[0] eq $c->{irc_stats_trigger} ) { $irc->yield( privmsg => $channel, $c->{irc_stats_url} ) }
   elsif ( $cmds[0] eq $c->{irc_quote_trigger} ) { get_quote( $username, $channel, @cmds ); }
   elsif ( $cmds[0] eq $c->{irc_addquote_trigger} ) { add_quote( $username, $msg ); }
   elsif ( $cmds[0] eq $c->{irc_url_trigger} ) { handle_url( $username, $channel, @cmds ); }

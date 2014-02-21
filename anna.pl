@@ -141,6 +141,10 @@ sub get_quote {
     my $result = db_get_quote();
     $irc->yield( privmsg => $channel, $result->{quote} );
   }
+  else {
+    my $result = db_search_quote($cmds[1]);
+    $irc->yield( privmsg => $channel, $result->{quote} ) unless (!$result);
+  }
 }
 
 sub add_quote {
@@ -228,7 +232,7 @@ sub add_karma {
 sub get_karma {
   my ( $channel, @cmds ) = @_;
   my $result = db_get_karma( lc $cmds[1] );
-  if (defined $result) {
+  if ($result) {
     $irc->yield( privmsg => $channel, "$result->{value} has $result->{sum} karma." );
   } else {
     $irc->yield( privmsg => $channel, "$cmds[1] has no karma yet.");
@@ -242,10 +246,19 @@ sub db_get_quote {
     || $log->logdie("DB: could not get quote from database. Bye!");
 }
 
+sub db_search_quote {
+  my ($search) = @_;
+  my $pst = $db->prepare("select quote from $c->{quote_table} where quote ilike ? order by random() limit 1");
+  $pst->execute('%' . $search . '%') || $log->error("DB, could not search.") && return;
+  my $row = $pst->fetchrow_hashref;
+  $pst->finish();
+  return $row;
+}
+
 sub db_add_quote {
   my ($who,$quote) = @_;
   my $pst = $db->prepare("insert into $c->{quote_table}(added_by,quote) values (?,?)");
-  $pst->execute($who,$quote);
+  $pst->execute($who,$quote) || $log->error("DB, could not add quote.");
   $pst->finish();
 }
 
@@ -272,21 +285,21 @@ sub db_insert_url {
   my $pst = $db->prepare(
 "insert into $c->{url_table} (nickname,url,channel,domain) select ?,?,?,? where not exists (select 1 from $c->{url_table} where url = ?)"
   );
-  $pst->execute( $user, $url, $channel, $domain, $url ) || $log->logdie("DB: could not insert $url . Bye!");
+  $pst->execute($user,$url,$channel,$domain,$url) || $log->error("DB: could not insert $url . Bye!");
   $pst->finish();
 }
 
 sub db_mark_reported {
   my ($id) = @_;
   my $pst = $db->prepare("update $c->{url_table} set disabled = true where id = ?");
-  $pst->execute($id) || $log->logdie("DB, could not disable $id. Bye!");
+  $pst->execute($id) || $log->error("DB, could not disable $id. Bye!");
   $pst->finish();
 }
 
 sub db_search_url {
   my ($search) = @_;
-  my $pst = $db->prepare("select url,id from $c->{url_table} where url ~ ? order by random() limit 1");
-  $pst->execute($search) || $log->logdie("DB, could no search. Bye!");
+  my $pst = $db->prepare("select url,id from $c->{url_table} where url like ? order by random() limit 1");
+  $pst->execute('%' . $search . '%') || $log->error("DB, could no search. Bye!") && return;
   my $row = $pst->fetchrow_hashref;
   $pst->finish();
   return $row;
@@ -294,15 +307,15 @@ sub db_search_url {
 
 sub db_add_karma {
   my ( $item, $score ) = @_;
-  my $pst = $db->prepare("insert into $c->{karma_table}(value,score) values (?,?)");
-  $pst->execute( $item, $score );
-  $pst->finish();
+  my $pst = $db->prepare("insert into $c->{karma_table}(value,score) values ($item,$score)"); 
+  $pst->execute || $log->error("DB, could no add karma.");
+  $pst->finish;
 }
 
 sub db_get_karma {
   my ($item) = @_;
   my $pst = $db->prepare("select value,sum(score) from $c->{karma_table} where value = ? group by value");
-  $pst->execute($item);
+  $pst->execute($item) || $log->error("DB, could not get karma!") && return;
   my $row = $pst->fetchrow_hashref;
   $pst->finish();
   return $row;

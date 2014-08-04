@@ -26,7 +26,6 @@ my $dbh = Anna::Schema->connect(
   }
 );
 
-
 my $irc = Mojo::IRC->new(
   nick => $config{nick},
   user => $config{username},
@@ -66,14 +65,36 @@ $irc->on(irc_privmsg => sub {
     my @cmds = split / /, $message;
 
     if ($cmds[0] =~ /^!(\w+)/) {
-      if ( $1 =~ /karma/i) {
+
+      if ( $1 =~ /^karma$/i ) {
         my $score = $karma->search({
             value => { ilike => $cmds[1] },
           })->get_column('score')->sum;
         return $c->write(PRIVMSG => $chan => "$cmds[1] has ".($score?$score:'0'). ' karma');
       }
 
-      if ( $1 =~ /top/i ) {
+      if ( $1 =~ /^quote$/i ) {
+        my $quote;
+        if (scalar @cmds == 1 ) {
+          $quote = $dbh->resultset('Quote')->search(undef, { order_by => 'random()', rows => 1 })->first;
+        } else {
+          $quote = $dbh->resultset('Quote')->search(
+            { quote => { 'ilike' => "%$cmds[1]%" }},
+            { order_by => 'random()', rows => 1 })->first;
+        }
+        return $irc->write(PRIVMSG => $chan => $quote->quote);
+      }
+
+      if ( $1 =~ /^addquote$/i ) {
+        shift @cmds;
+        $dbh->resultset('Quote')->create({
+          added_by => $nick,
+          quote => join ' ', @cmds
+        });
+        return;
+      }
+
+      if ( $1 =~ /^top$/i ) {
         my @res = $karma->search(undef,
           { select => [
               { 'initcap' => 'value', -as => 'value' },
@@ -81,8 +102,18 @@ $irc->on(irc_privmsg => sub {
             order_by => { -desc => 'score' },
             group_by => [{ 'initcap' => 'value'}],
             rows => 5 });
-        return $irc->write(PRIVMSG => $chan => 'Top 5 - '.
-          join '. ', map { $_->value.': '.$_->score } @res );
+        return $irc->write(PRIVMSG => $chan => 'Top 5 - '. join '. ', map { $_->value.': '.$_->score } @res );
+      }
+
+      if ( $1 =~ /^bottom$/i ) {
+        my @res = $karma->search(undef,
+          { select => [
+              { 'initcap' => 'value', -as => 'value' },
+              { 'sum' => 'score', -as => 'score' }],
+            order_by => { -asc => 'score' },
+            group_by => [{ 'initcap' => 'value'}],
+            rows => 5 });
+        return $irc->write(PRIVMSG => $chan => 'Bottom 5 - '. join '. ', map { $_->value.': '.$_->score } @res );
       }
     }
 });
@@ -93,11 +124,11 @@ $irc->on(irc_join => sub {
 
 $irc->on(error => sub {
     my ($c, $err) = @_;
-    $irc->ioloop->timer($c->_reconnect_in, sub => { $c->connect });
+    warn $err;
 });
 
 sub _reconnect_in {
-  10 + int rand 30;
+  return 10 + int rand 30;
 }
 
 $irc->connect(\&on_connect);

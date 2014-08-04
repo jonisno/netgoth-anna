@@ -9,6 +9,7 @@ use Mojo::IOLoop;
 use Mojo::UserAgent;;
 use Anna::Schema;
 use Config::General;
+use Net::Twitter::Lite::WithAPIv1_1;
 
 use Data::Printer;
 
@@ -33,6 +34,14 @@ my $irc = Mojo::IRC->new(
   server => "$config{server}:$config{port}",
 );
 
+my $twitter = Net::Twitter::Lite::WithAPIv1_1->new(
+  consumer_key        => $config{twitter_key},
+  consumer_secret     => $config{twitter_secret},
+  access_token        => $config{twitter_token},
+  access_token_secret => $config{twitter_token_secret},
+  ssl                 => 1
+);
+
 sub on_connect {
   my ($c, $error) = @_;
   #Delay channel joins by two seconds.
@@ -45,6 +54,13 @@ $irc->on(irc_privmsg => sub {
     my ($c, $raw) = @_;
     my ($nick, $host) = split /!/, $raw->{prefix};
     my ($chan,$message) = @{$raw->{params}};
+
+    if($message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/) {
+      my $status = $twitter->show_status($1);
+      my $tweet = $status->{text};
+      $tweet =~ s/\R+/\ /g;
+      $irc->write(PRIVMSG => $chan => "\@$status->{user}->{screen_name}: $tweet");
+    }
 
     my $karma = $dbh->resultset('Karma');
 

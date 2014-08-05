@@ -65,6 +65,8 @@ $irc->on(irc_privmsg => sub {
     my $karma = $dbh->resultset('Karma');
 
     if($message =~ /\+{2}(\w+)|(\w+)\+{2}/) {
+      return if ($1 && $1 =~ /$nick/i);
+      return if ($2 && $2 =~ /$nick/i);
       $karma->create({
           value => $1//$2,
           score => 1
@@ -72,6 +74,8 @@ $irc->on(irc_privmsg => sub {
     }
 
     if($message =~ /-{2}(\w+)|(\w+)-{2}/) {
+      return if ($1 && $1 =~ /$nick/i);
+      return if ($2 && $2 =~ /$nick/i);
       $karma->create({
           value => $1//$2,
           score => '-1'

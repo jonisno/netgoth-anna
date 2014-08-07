@@ -1,4 +1,4 @@
-package Anna::Schema;
+package Anna::Model;
 
 use base qw/DBIx::Class::Schema/;
 

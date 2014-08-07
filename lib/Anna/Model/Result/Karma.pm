@@ -1,4 +1,4 @@
-package Anna::Schema::Result::Karma;
+package Anna::Model::Result::Karma;
 
 use strict;
 use warnings;

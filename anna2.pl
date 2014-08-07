@@ -7,7 +7,7 @@ use lib "$Bin/lib";
 use Mojo::IRC;
 use Mojo::IOLoop;
 use Mojo::UserAgent;;
-use Anna::Schema;
+use Anna::Model;
 use Config::General;
 use Net::Twitter::Lite::WithAPIv1_1;
 
@@ -15,7 +15,7 @@ use Data::Printer;
 
 my %config = Config::General->new('./conf/anna.conf')->getall;
 
-my $dbh = Anna::Schema->connect(
+my $dbh = Anna::Model->connect(
   $config{dburi},
   $config{dbuser},
   $config{dbpass},
@@ -67,19 +67,13 @@ $irc->on(irc_privmsg => sub {
     if($message =~ /\+{2}(\w+)|(\w+)\+{2}/) {
       return if ($1 && $1 =~ /$nick/i);
       return if ($2 && $2 =~ /$nick/i);
-      $karma->create({
-          value => $1//$2,
-          score => 1
-      });
+      $karma->create({ value => $1//$2, score => 1 });
     }
 
     if($message =~ /-{2}(\w+)|(\w+)-{2}/) {
       return if ($1 && $1 =~ /$nick/i);
       return if ($2 && $2 =~ /$nick/i);
-      $karma->create({
-          value => $1//$2,
-          score => '-1'
-      });
+      $karma->create({ value => $1//$2, score => '-1' });
     }
 
     my @cmds = split / /, $message;
@@ -87,59 +81,43 @@ $irc->on(irc_privmsg => sub {
     if ($cmds[0] =~ /^!(\w+)/) {
 
       if ( $1 =~ /^karma$/i ) {
-        my $score = $karma->search({
-            value => { ilike => $cmds[1] },
-          })->get_column('score')->sum;
-        return $c->write(PRIVMSG => $chan => "$cmds[1] has ".($score?$score:'0'). ' karma');
+        return $c->write(PRIVMSG => $chan => "$cmds[1] has " . $karma->score_for($cmds[1]) .  ' karma');
       }
 
       if ( $1 =~ /^quote$/i ) {
-        my $quote;
+        my $quote = $dbh->resultset('Quote');
         if (scalar @cmds == 1 ) {
-          $quote = $dbh->resultset('Quote')->search(undef, { order_by => 'random()', rows => 1 })->first;
+          $quote = $quote->find_random;
         } else {
-          $quote = $dbh->resultset('Quote')->search(
-            { quote => { 'ilike' => "%$cmds[1]%" }},
-            { order_by => 'random()', rows => 1 })->first;
+          $quote = $quote->search_random($cmds[1]);
         }
         return $irc->write(PRIVMSG => $chan => $quote->quote);
       }
 
       if ( $1 =~ /^addquote$/i ) {
         shift @cmds;
-        $dbh->resultset('Quote')->create({
-          added_by => $nick,
-          quote => join ' ', @cmds
-        });
+        $dbh->resultset('Quote')->create({ added_by => $nick, quote => join ' ', @cmds });
         return;
       }
 
       if ( $1 =~ /^top$/i ) {
-        my @res = $karma->search(undef,
-          { select => [
-              { 'initcap' => 'value', -as => 'value' },
-              { 'sum' => 'score', -as => 'score' }],
-            order_by => { -desc => 'score' },
-            group_by => [{ 'initcap' => 'value'}],
-            rows => 5 });
-        return $irc->write(PRIVMSG => $chan => 'Top 5 - '. join '. ', map { $_->value.': '.$_->score } @res );
+        return $irc->write(PRIVMSG => $chan => 'Top 5 - '. join '. ', map { $_->value.': '.$_->score } $karma->highest(5) );
       }
 
       if ( $1 =~ /^bottom$/i ) {
-        my @res = $karma->search(undef,
-          { select => [
-              { 'initcap' => 'value', -as => 'value' },
-              { 'sum' => 'score', -as => 'score' }],
-            order_by => { -asc => 'score' },
-            group_by => [{ 'initcap' => 'value'}],
-            rows => 5 });
-        return $irc->write(PRIVMSG => $chan => 'Bottom 5 - '. join '. ', map { $_->value.': '.$_->score } @res );
+        return $irc->write(PRIVMSG => $chan => 'Bottom 5 - '. join '. ', map { $_->value.': '.$_->score } $karma->lowest(5) );
       }
     }
 });
 
 $irc->on(irc_join => sub {
     my ($c, $msg) = @_;
+    p $msg;
+});
+
+$irc->on(irc_part => sub {
+    my ($c, $msg) = @_;
+    p $msg;
 });
 
 $irc->on(error => sub {

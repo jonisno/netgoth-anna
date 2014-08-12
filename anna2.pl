@@ -6,16 +6,18 @@ use FindBin qw/$Bin/;
 use lib "$Bin/lib";
 use Mojo::IRC;
 use Mojo::IOLoop;
+use Parse::IRC;
 use Mojo::UserAgent;;
 use Anna::Model;
 use Config::General;
 use Net::Twitter::Lite::WithAPIv1_1;
-
+use DateTime;
+use DateTime::Format::Duration;
 use Data::Printer;
 
 my %config = Config::General->new('./conf/anna.conf')->getall;
 
-my $dbh = Anna::Model->connect(
+my $db = Anna::Model->connect(
   $config{dburi},
   $config{dbuser},
   $config{dbpass},
@@ -54,16 +56,20 @@ $irc->on(irc_privmsg => sub {
     my ($c, $raw) = @_;
     my ($nick, $host) = split /!/, $raw->{prefix};
     my ($chan,$message) = @{$raw->{params}};
+    if (lc $chan eq lc $c->nick || lc $nick eq lc $c->nick) {
+      return;
+    }
+    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_active => 'now()' });
 
-    if($message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/) {
+    if( $message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/ ) {
       my $status = $twitter->show_status($1);
       my $tweet = $status->{text};
+      p $tweet;
       $tweet =~ s/\R+/\ /g;
-      $irc->write(PRIVMSG => $chan => "\@$status->{user}->{screen_name}: $tweet");
+      return $irc->write(PRIVMSG => $chan => "[Twitter] \@$status->{user}->{screen_name}: $tweet");
     }
 
-    my $karma = $dbh->resultset('Karma');
-
+    my $karma = $db->resultset('Karma');
     if($message =~ /\+{2}(\w+)|(\w+)\+{2}/) {
       return if ($1 && $1 =~ /$nick/i);
       return if ($2 && $2 =~ /$nick/i);
@@ -85,7 +91,7 @@ $irc->on(irc_privmsg => sub {
       }
 
       if ( $1 =~ /^quote$/i ) {
-        my $quote = $dbh->resultset('Quote');
+        my $quote = $db->resultset('Quote');
         if (scalar @cmds == 1 ) {
           $quote = $quote->find_random;
         } else {
@@ -96,7 +102,7 @@ $irc->on(irc_privmsg => sub {
 
       if ( $1 =~ /^addquote$/i ) {
         shift @cmds;
-        $dbh->resultset('Quote')->create({ added_by => $nick, quote => join ' ', @cmds });
+        $db->resultset('Quote')->create({ added_by => $nick, quote => join ' ', @cmds });
         return;
       }
 
@@ -107,17 +113,38 @@ $irc->on(irc_privmsg => sub {
       if ( $1 =~ /^bottom$/i ) {
         return $irc->write(PRIVMSG => $chan => 'Bottom 5 - '. join '. ', map { $_->value.': '.$_->score } $karma->lowest(5) );
       }
+
+      if ( $1 =~ /^stats$/i ) {
+        return $irc->write(PRIVMSG => $chan => "$nick: http://goatse.co.uk/irc/orgy.html");
+      }
+
+      if ( $1 =~ /^help$/i ) {
+        return $irc->write(NOTICE => $nick => 'Help for Anna: !karma <text> to find karma for something, !top and !bottom for max and min karma, !quote for random quote, !quote <term> to search quotes, !addquote <text> to add a quote, !stats for channel statistics');
+      }
     }
 });
 
+$irc->on(irc_rpl_namreply => sub {
+    my ($c,$raw) = @_;
+    my @online = split / /, @{$raw->{params}}[3];
+    s/[@\+&]// for @online;
+    $db->resultset('Users')->find_or_create({ nick => $_ })->update({ last_seen => 'now()', online_now => 't' }) for @online;
+  }
+);
+
 $irc->on(irc_join => sub {
-    my ($c, $msg) = @_;
-    p $msg;
+    my ($c, $raw) = @_;
+    my ($nick) = split /!/, $raw->{prefix};
+    my ($chan) = @{$raw->{params}};
+    return if lc $nick eq lc $c->nick;
+    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', online_now => 't' });
 });
 
 $irc->on(irc_part => sub {
-    my ($c, $msg) = @_;
-    p $msg;
+    my ($c, $raw) = @_;
+    my ($nick) = split /!/, $raw->{prefix};
+    my ($chan) = @{$raw->{params}};
+    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', online_now => 'f' });
 });
 
 $irc->on(error => sub {

@@ -4,10 +4,15 @@ use strict;
 use warnings;
 use base qw/DBIx::Class::ResultSet/;
 
-sub score_for {
+sub get_totals {
   my ($self, $item) = @_;
-  return $self->search({value => {ilike => $item}})->get_column('score')->sum
-    || '0';
+  my $positive = $self->search({ value => { ilike => $item }, score => 1 })->count;
+  my $negative = $self->search({ value => { ilike => $item }, score => '-1' })->count;
+  return {
+    pos => $positive // 0,
+    neg => $negative // 0,
+    tot => ($positive - $negative) // 0,
+  };
 }
 
 sub highest {

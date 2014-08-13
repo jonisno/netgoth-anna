@@ -88,7 +88,8 @@ $irc->on(irc_privmsg => sub {
       my $match = $1;
 
       if ( $match =~ /^karma$/i ) {
-        return $c->write(PRIVMSG => $chan => "$cmds[1] has " . $karma->score_for($cmds[1]) .  ' karma');
+        my $rs = $db->resultset('Karma')->get_totals($cmds[1]);
+        return $c->write(PRIVMSG => $chan => "$cmds[1] has $rs->{tot} karma. (+$rs->{pos},-$rs->{neg})");
       }
 
       if ( $match =~ /^quote$/i ) {

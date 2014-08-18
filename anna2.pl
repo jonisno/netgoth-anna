@@ -64,8 +64,13 @@ $irc->on(irc_privmsg => sub {
     if( $message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/ ) {
       my $status = $twitter->show_status($1);
       my $tweet = $status->{text};
-      p $tweet;
       $tweet =~ s/\R+/\ /g;
+      my @expandable = $status->{entities};
+      $tweet =~ s/https?:\/\/t\.co\/\w+//g;
+      for (@expandable) {
+        $tweet .= sprintf(' %s', $_->{media_url_https}) for @{$_->{media}};
+        $tweet .= sprintf(' %s', $_->{expanded_url}) for @{$_->{urls}};
+      }
       return $irc->write(PRIVMSG => $chan => "[Twitter] \@$status->{user}->{screen_name}: $tweet");
     }
 
@@ -145,6 +150,10 @@ $irc->on(irc_privmsg => sub {
 
       if ( $match =~ /^help$/i ) {
         return $irc->write(NOTICE => $nick => 'Help for Anna: !karma <text> to find karma for something, !top and !bottom for max and min karma, !quote for random quote, !quote <term> to search quotes, !addquote <text> to add a quote, !stats for channel statistics and !seen <nick>.');
+      }
+
+      if ( $match =~ /^anna$/i ) {
+        return $irc->write(PRIVMSG => $chan => 'https://www.youtube.com/watch?v=zf2wbRWb9xI');
       }
     }
 });

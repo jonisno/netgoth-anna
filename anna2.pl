@@ -33,7 +33,7 @@ my $irc = Mojo::IRC->new(
   nick => $config{nick},
   user => $config{username},
   name => $config{displayname},
-  server => "$config{server}:$config{port}",
+  server => "$config{server}"
 );
 
 my $twitter = Net::Twitter::Lite::WithAPIv1_1->new(
@@ -59,7 +59,7 @@ $irc->on(irc_privmsg => sub {
     if (lc $chan eq lc $c->nick || lc $nick eq lc $c->nick) {
       return;
     }
-    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', last_active => 'now()', online_now => 't' });
+    $db->resultset('Users')->find_or_create({ nick => { ilike => $nick }})->update({ last_seen => 'now()', last_active => 'now()', online_now => 't' });
 
     if( $message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/ ) {
       my $status = $twitter->show_status($1);
@@ -75,16 +75,14 @@ $irc->on(irc_privmsg => sub {
     }
 
     my $karma = $db->resultset('Karma');
-    if($message =~ /\+{2}(\S+)|(\S+)\+{2}/) {
-      return if ($1 && $1 =~ /$nick/i);
-      return if ($2 && $2 =~ /$nick/i);
-      $karma->create({ value => $1//$2, score => 1 });
-    }
-
-    if($message =~ /-{2}(\S+)|(\S+)-{2}/) {
-      return if ($1 && $1 =~ /$nick/i);
-      return if ($2 && $2 =~ /$nick/i);
-      $karma->create({ value => $1//$2, score => '-1' });
+    while($message =~ /(\+\+|--)([^\s\-+]+(?:[\-+][^\s\-+]+)*)|([^\s\-+]+(?:[\-+][^\s\-+]+)*)(\+\+|--)/g) {
+        return if ($2 && $2 =~ /$nick/i);
+        return if ($3 && $3 =~ /$nick/i);
+        if (($1 && $1 eq '++') || ($4 && $4 eq '++')) {
+            $karma->create({ value => $3//$4, score => 1});
+        } else {
+            $karma->create({ value => $3//$4, score => '-1'});
+        }
     }
 
     my @cmds = split / /, $message;
@@ -104,10 +102,11 @@ $irc->on(irc_privmsg => sub {
         } else {
           $quote = $quote->search_random($cmds[1]);
         }
+        return $irc->write(PRIVMSG => $chan => "I have no quote matching $cmds[1]") unless $quote;
         return $irc->write(PRIVMSG => $chan => $quote->quote);
       }
 
-      if ( $match =~ /^addquote$/i ) {
+      if ( $match =~ /^addquote$/i && scalar @cmds > 1) {
         shift @cmds;
         $db->resultset('Quote')->create({ added_by => $nick, quote => join ' ', @cmds });
         return;
@@ -136,6 +135,7 @@ $irc->on(irc_privmsg => sub {
         my @pattern;
         $duration->years == 1 ? push @pattern, '%Y year' : push @pattern, '%Y years' unless $duration->years == 0;
         $duration->months == 1 ? push @pattern, '%m month' : push @pattern, '%m months' unless $duration->months == 0;
+        $duration->weeks == 1 ? push @pattern, '%m week' : push @pattern, '%m weeks' unless $duration->weeks == 0;
         $duration->days == 1 ? push @pattern, '%e day' : push @pattern, '%e days' unless $duration->days == 0;
         $duration->hours == 1 ? push @pattern,'%H hour' : push @pattern, '%H hours' unless $duration->hours == 0;
         $duration->minutes == 1 ? push @pattern, '%M minute' : push @pattern, '%M minutes' unless $duration->minutes == 0;
@@ -155,6 +155,10 @@ $irc->on(irc_privmsg => sub {
       if ( $match =~ /^anna$/i ) {
         return $irc->write(PRIVMSG => $chan => 'https://www.youtube.com/watch?v=zf2wbRWb9xI');
       }
+
+      if ( $match =~ /^source$/i ) {
+        return $irc->write(PRIVMSG => $chan => 'My source is at https://github.com/jonisno/netgoth-anna and I\'m currently on the develop branch.');
+      }
     }
 });
 
@@ -162,7 +166,8 @@ $irc->on(irc_rpl_namreply => sub {
     my ($c,$raw) = @_;
     my @online = split / /, @{$raw->{params}}[3];
     s/[@\+&]// for @online;
-    $db->resultset('Users')->find_or_create({ nick => { ilike => $_ }})->update({ last_seen => 'now()', online_now => 't' }) for @online;
+    #$db->resultset('Users')->find_or_create({ nick => { ilike => $_ }})->update({ last_seen => 'now()', online_now => 't' }) for @online;
+    #$db->resultset('Users')->search({ nick => @online })->update({ online_now => 'f' });
   }
 );
 

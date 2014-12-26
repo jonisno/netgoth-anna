@@ -59,7 +59,7 @@ $irc->on(irc_privmsg => sub {
     if (lc $chan eq lc $c->nick || lc $nick eq lc $c->nick) {
       return;
     }
-    $db->resultset('Users')->find_or_create({ nick => { ilike => $nick }})->update({ last_seen => 'now()', last_active => 'now()', online_now => 't' });
+#    $db->resultset('Users')->find_or_create({ 'LOWER(me.nick)' => $nick })->update({ last_seen => 'now()', last_active => 'now()', online_now => 't' });
 
     if( $message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/ ) {
       my $status = $twitter->show_status($1);
@@ -76,8 +76,8 @@ $irc->on(irc_privmsg => sub {
 
     my $karma = $db->resultset('Karma');
     while($message =~ /(\+\+|--)([^\s\-+]+(?:[\-+][^\s\-+]+)*)|([^\s\-+]+(?:[\-+][^\s\-+]+)*)(\+\+|--)/g) {
-        return if ($2 && $2 =~ /$nick/i);
-        return if ($3 && $3 =~ /$nick/i);
+        return if (!defined $2 || $2 =~ /$nick/i);
+        return if (!defined $3 || $3 =~ /$nick/i);
         if (($1 && $1 eq '++') || ($4 && $4 eq '++')) {
             $karma->create({ value => $3//$4, score => 1});
         } else {
@@ -162,29 +162,29 @@ $irc->on(irc_privmsg => sub {
     }
 });
 
-$irc->on(irc_rpl_namreply => sub {
-    my ($c,$raw) = @_;
-    my @online = split / /, @{$raw->{params}}[3];
-    s/[@\+&]// for @online;
-    #$db->resultset('Users')->find_or_create({ nick => { ilike => $_ }})->update({ last_seen => 'now()', online_now => 't' }) for @online;
-    #$db->resultset('Users')->search({ nick => @online })->update({ online_now => 'f' });
-  }
-);
+#$irc->on(irc_rpl_namreply => sub {
+#    my ($c,$raw) = @_;
+#    my @online = split / /, @{$raw->{params}}[3];
+#    s/[@\+&]// for @online;
+#    $db->resultset('Users')->find_or_create({ nick => { ilike => $_ }})->update({ last_seen => 'now()', online_now => 't' }) for @online;
+#    $db->resultset('Users')->search({ nick => @online })->update({ online_now => 'f' });
+#  }
+#);
 
-$irc->on(irc_join => sub {
-    my ($c, $raw) = @_;
-    my ($nick) = split /!/, $raw->{prefix};
-    my ($chan) = @{$raw->{params}};
-    return if lc $nick eq lc $c->nick;
-    $db->resultset('Users')->find_or_create({ nick => { ilike => $nick }})->update({ last_seen => 'now()', online_now => 't' });
-});
+#$irc->on(irc_join => sub {
+#    my ($c, $raw) = @_;
+#    my ($nick) = split /!/, $raw->{prefix};
+#    my ($chan) = @{$raw->{params}};
+#    return if lc $nick eq lc $c->nick;
+#    $db->resultset('Users')->find_or_create({ 'LOWER(me.nick)' => $nick })->update({ last_seen => 'now()', online_now => 't' });
+#});
 
-$irc->on(irc_part => sub {
-    my ($c, $raw) = @_;
-    my ($nick) = split /!/, $raw->{prefix};
-    my ($chan) = @{$raw->{params}};
-    $db->resultset('Users')->find_or_create({ nick => { ilike => $nick }})->update({ last_seen => 'now()', online_now => 'f' });
-});
+#$irc->on(irc_part => sub {
+#    my ($c, $raw) = @_;
+#    my ($nick) = split /!/, $raw->{prefix};
+#    my ($chan) = @{$raw->{params}};
+#    $db->resultset('Users')->find_or_create({ 'LOWER(me.nick)' => $nick })->update({ last_seen => 'now()', online_now => 'f' });
+#});
 
 $irc->on(error => sub {
     my ($c, $err) = @_;

@@ -1,6 +1,5 @@
-#!/usr/bin/perl
+#!/usr/bin/env perl
 use Mojo::Base -strict;
-use 5.014;
 
 use FindBin qw/$Bin/;
 use lib "$Bin/lib";
@@ -56,10 +55,11 @@ $irc->on(irc_privmsg => sub {
     my ($c, $raw) = @_;
     my ($nick, $host) = split /!/, $raw->{prefix};
     my ($chan,$message) = @{$raw->{params}};
+    my $ua = Mojo::UserAgent->new;
     if (lc $chan eq lc $c->nick || lc $nick eq lc $c->nick) {
       return;
     }
-#    $db->resultset('Users')->find_or_create({ 'LOWER(me.nick)' => $nick })->update({ last_seen => 'now()', last_active => 'now()', online_now => 't' });
+    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', last_active => 'now()', online_now => 't' });
 
     if( $message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/ ) {
       my $status = $twitter->show_status($1);
@@ -76,12 +76,12 @@ $irc->on(irc_privmsg => sub {
 
     my $karma = $db->resultset('Karma');
     while($message =~ /(\+\+|--)([^\s\-+]+(?:[\-+][^\s\-+]+)*)|([^\s\-+]+(?:[\-+][^\s\-+]+)*)(\+\+|--)/g) {
-        return if (!defined $2 || $2 =~ /$nick/i);
-        return if (!defined $3 || $3 =~ /$nick/i);
-        if (($1 && $1 eq '++') || ($4 && $4 eq '++')) {
-            $karma->create({ value => $3//$4, score => 1});
+        return if (defined $2 && $2 =~ /$nick/i);
+        return if (defined $3 && $3 =~ /$nick/i);
+        if ((defined $1 && $1 eq '++') || (defined $4 && $4 eq '++')) {
+            $karma->create({ value => $3//$2, score => 1});
         } else {
-            $karma->create({ value => $3//$4, score => '-1'});
+            $karma->create({ value => $3//$2, score => '-1'});
         }
     }
 
@@ -127,7 +127,7 @@ $irc->on(irc_privmsg => sub {
       if ( $match =~ /^seen$/i ) {
         return unless $cmds[1];
         my $user = $db->resultset('Users')->find({ nick => { ilike => $cmds[1] }});
-        return $irc->write(PRIVMSG => $chan => "Are you fucking stupid or something?") if lc $cmds[1] eq lc $c->nick;
+        return $irc->write(PRIVMSG => $chan => "Are you fucking stupid or something?") if $cmds[1] eq $c->nick;
         return $irc->write(PRIVMSG => $chan => "$nick: I have never seen $cmds[1]") unless $user;
         return $irc->write(PRIVMSG => $chan => "Oh, fuck off.") if $user->nick =~ /$nick/i;
         my $duration;
@@ -141,11 +141,7 @@ $irc->on(irc_privmsg => sub {
         $duration->minutes == 1 ? push @pattern, '%M minute' : push @pattern, '%M minutes' unless $duration->minutes == 0;
         $duration->seconds == 1 ? push @pattern, '%S second' : push @pattern, '%S seconds' unless $duration->seconds == 0;
         my $dtf = DateTime::Format::Duration->new( pattern => join(', ', @pattern), normalize => 1 );
-        if($user->online_now && $user->last_active) {
-          return $irc->write(PRIVMSG => $chan => sprintf('%s: %s was last active %s ago', $nick, $user->nick, $dtf->format_duration($duration)));
-        } else {
-          return $irc->write(PRIVMSG => $chan => sprintf('%s: %s was last seen online %s ago', $nick, $user->nick, $dtf->format_duration($duration)));
-        }
+        return $irc->write(PRIVMSG => $chan => sprintf('%s: %s was seen %s ago', $nick, $user->nick, $dtf->format_duration($duration)));
       }
 
       if ( $match =~ /^help$/i ) {
@@ -159,32 +155,38 @@ $irc->on(irc_privmsg => sub {
       if ( $match =~ /^source$/i ) {
         return $irc->write(PRIVMSG => $chan => 'My source is at https://github.com/jonisno/netgoth-anna and I\'m currently on the develop branch.');
       }
+#      if ( $match =~ /^google$/i ) {
+#        warn "googles";
+#        my $tx = $ua->get("https://ajax.googleapis.com/ajax/services/search/web?v=1.0&q=$cmds[1]");
+#        use DDP;
+#        p $tx->res;
+#      }
     }
 });
 
-#$irc->on(irc_rpl_namreply => sub {
-#    my ($c,$raw) = @_;
-#    my @online = split / /, @{$raw->{params}}[3];
-#    s/[@\+&]// for @online;
-#    $db->resultset('Users')->find_or_create({ nick => { ilike => $_ }})->update({ last_seen => 'now()', online_now => 't' }) for @online;
-#    $db->resultset('Users')->search({ nick => @online })->update({ online_now => 'f' });
-#  }
-#);
+$irc->on(irc_rpl_namreply => sub {
+    my ($c,$raw) = @_;
+    my @online = split / /, @{$raw->{params}}[3];
+    s/[@\+&]// for @online;
+    $db->resultset('Users')->update_all({ online_now => 'f' });
+    $db->resultset('Users')->find_or_create({ nick => $_ })->update({ nick => $_, last_seen => 'now()', online_now => 't' }) for @online;
+  }
+);
 
-#$irc->on(irc_join => sub {
-#    my ($c, $raw) = @_;
-#    my ($nick) = split /!/, $raw->{prefix};
-#    my ($chan) = @{$raw->{params}};
-#    return if lc $nick eq lc $c->nick;
-#    $db->resultset('Users')->find_or_create({ 'LOWER(me.nick)' => $nick })->update({ last_seen => 'now()', online_now => 't' });
-#});
+$irc->on(irc_join => sub {
+    my ($c, $raw) = @_;
+    my ($nick) = split /!/, $raw->{prefix};
+    my ($chan) = @{$raw->{params}};
+    return if $nick eq $c->nick;
+    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', online_now => 't' });
+});
 
-#$irc->on(irc_part => sub {
-#    my ($c, $raw) = @_;
-#    my ($nick) = split /!/, $raw->{prefix};
-#    my ($chan) = @{$raw->{params}};
-#    $db->resultset('Users')->find_or_create({ 'LOWER(me.nick)' => $nick })->update({ last_seen => 'now()', online_now => 'f' });
-#});
+$irc->on(irc_part => sub {
+    my ($c, $raw) = @_;
+    my ($nick) = split /!/, $raw->{prefix};
+    my ($chan) = @{$raw->{params}};
+    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', online_now => 'f' });
+});
 
 $irc->on(error => sub {
     my ($c, $err) = @_;

@@ -68,8 +68,7 @@ $irc->on(irc_privmsg => sub {
       my @expandable = $status->{entities};
       $tweet =~ s/https?:\/\/t\.co\/\w+//g;
       for (@expandable) {
-        $tweet .= sprintf(' %s', $_->{media_url_https}) for @{$_->{media}};
-        $tweet .= sprintf(' %s', $_->{expanded_url}) for @{$_->{urls}};
+        $tweet .= sprintf(' %s', $_->{expanded_url}) for @{$_->{media}};
       }
       return $irc->write(PRIVMSG => $chan => "[Twitter] \@$status->{user}->{screen_name}: $tweet");
     }
@@ -155,12 +154,24 @@ $irc->on(irc_privmsg => sub {
       if ( $match =~ /^source$/i ) {
         return $irc->write(PRIVMSG => $chan => 'My source is at https://github.com/jonisno/netgoth-anna and I\'m currently on the develop branch.');
       }
-#      if ( $match =~ /^google$/i ) {
-#        warn "googles";
-#        my $tx = $ua->get("https://ajax.googleapis.com/ajax/services/search/web?v=1.0&q=$cmds[1]");
-#        use DDP;
-#        p $tx->res;
-#      }
+      if ( $match =~ /^bing$/i ) {
+				shift @cmds;
+				my $searchstring = join ' ', @cmds;
+				use Mojo::Util qw(b64_encode);
+				(my $auth =  b64_encode "$config{bing_account}:$config{bing_account}") =~ s/\n//g;
+				my $tx = $ua->get("https://api.datamarket.azure.com/Bing/Search/v1/Web" =>
+					{ Authorization => "Basic $auth" } => form => {
+						Query => "'$searchstring'",
+						'$format' => 'JSON',
+						Options => "'DisableLocationDetection'",
+						WebSearchOptions => "'DisableQueryAlterations'",
+						Adult => "'Off'"
+					});
+				my $results = $tx->res->json;
+				return $irc->write(PRIVMSG => $chan => "No results for: $searchstring") unless $results;
+				my $res = $results->{d}->{results}[0];
+				return $irc->write(PRIVMSG => $chan => "$res->{Description} - $res->{Url}");
+      }
     }
 });
 

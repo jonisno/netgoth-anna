@@ -6,17 +6,17 @@ use lib "$Bin/lib";
 use Mojo::IRC;
 use Mojo::IOLoop;
 use Parse::IRC;
-use Mojo::UserAgent;;
+use Mojo::UserAgent;
 use Anna::Model;
 use Config::General;
 use Net::Twitter::Lite::WithAPIv1_1;
 use DateTime;
 use DateTime::Format::Duration;
-use Data::Printer;
+use DateTime::Format::ISO8601;
 
 my %config = Config::General->new('./conf/anna.conf')->getall;
 
-my $db = Anna::Model->connect(
+state $db = Anna::Model->connect(
   $config{dburi},
   $config{dbuser},
   $config{dbpass},
@@ -27,15 +27,14 @@ my $db = Anna::Model->connect(
     PrintWarn      => 1
   }
 );
-
-my $irc = Mojo::IRC->new(
+state $irc = Mojo::IRC->new(
   nick => $config{nick},
   user => $config{username},
   name => $config{displayname},
   server => "$config{server}"
 );
-
-my $twitter = Net::Twitter::Lite::WithAPIv1_1->new(
+state $ua      = Mojo::UserAgent->new;
+state $twitter = Net::Twitter::Lite::WithAPIv1_1->new(
   consumer_key        => $config{twitter_key},
   consumer_secret     => $config{twitter_secret},
   access_token        => $config{twitter_token},
@@ -55,12 +54,21 @@ $irc->on(irc_privmsg => sub {
     my ($c, $raw) = @_;
     my ($nick, $host) = split /!/, $raw->{prefix};
     my ($chan,$message) = @{$raw->{params}};
-    my $ua = Mojo::UserAgent->new;
-    if (lc $chan eq lc $c->nick || lc $nick eq lc $c->nick) {
+
+		# Just log all messages
+		$db->resultset('Log')->create({ nick => $nick, message => $message });
+
+		# The danger of uncommented code, this was probably for a good reason,
+		# but I don't know why.
+		if (lc $chan eq lc $c->nick || lc $nick eq lc $c->nick) {
       return;
     }
+
+		# Update user record so we !seen works.
     $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', last_active => 'now()', online_now => 't' });
 
+		# If twitter link, fetch data and show it.
+		# Should probably be moved out of here.
     if( $message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/ ) {
       my $status = $twitter->show_status($1);
       my $tweet = $status->{text};
@@ -73,6 +81,28 @@ $irc->on(irc_privmsg => sub {
       return $irc->write(PRIVMSG => $chan => "[Twitter] \@$status->{user}->{screen_name}: $tweet");
     }
 
+		# Same as above, fetching data about youtube urls.
+		if ($message =~ /(https?:\/\/(?:www\.)?(youtu\.be|youtube\.com).*)(?:\s|$)/i) {
+			my $parselink = Mojo::URL->new($1);
+			my $domain = $2;
+			my $id;
+			$id = $parselink->query->param('v') if $domain =~ /^youtube\.com$/i;
+			($id = $parselink->path) =~ s/^\/// if $domain =~ /^youtu\.be$/i;
+			my $url = sprintf(
+				'https://www.googleapis.com/youtube/v3/videos?part=snippet,contentDetails&key=%s&id=%s',
+				$config{youtube_key},
+				$id
+			);
+			my $json = $ua->get($url)->res->json;
+			return unless $json;
+			my $vid = shift @{$json->{items}};
+			my ($h, $m) = ($vid->{contentDetails}{duration} =~ /(\d+)M(\d+)S/m);
+			$h = sprintf('%02d', $h);
+			$m = sprintf('%02d', $m);
+			return $irc->write(PRIVMSG => $chan => "Title: $vid->{snippet}{title} [$h:$m]");
+		}
+
+		# Sort out karma, this feels a bit yolo, but it works for now.
     my $karma = $db->resultset('Karma');
     while($message =~ /(\+\+|--)([^\s\-+]+(?:[\-+][^\s\-+]+)*)|([^\s\-+]+(?:[\-+][^\s\-+]+)*)(\+\+|--)/g) {
         return if (defined $2 && $2 =~ /$nick/i);
@@ -86,6 +116,7 @@ $irc->on(irc_privmsg => sub {
 
     my @cmds = split / /, $message;
 
+		# Here we deal with ! commands.
     if ($cmds[0] =~ /^!(\w+)/) {
       my $match = $1;
 
@@ -123,12 +154,15 @@ $irc->on(irc_privmsg => sub {
         return $irc->write(PRIVMSG => $chan => "$nick: http://goatse.co.uk/irc/orgy.html");
       }
 
+			# !seen command with added sassiness
       if ( $match =~ /^seen$/i ) {
         return unless $cmds[1];
         my $user = $db->resultset('Users')->find({ nick => { ilike => $cmds[1] }});
         return $irc->write(PRIVMSG => $chan => "Are you fucking stupid or something?") if $cmds[1] eq $c->nick;
         return $irc->write(PRIVMSG => $chan => "$nick: I have never seen $cmds[1]") unless $user;
         return $irc->write(PRIVMSG => $chan => "Oh, fuck off.") if $user->nick =~ /$nick/i;
+
+				# Holy shit motherfucker. Better sort this out.
         my $duration;
         $user->online_now && $user->last_active ? $duration = DateTime->now - $user->last_active : $duration = DateTime->now - $user->last_seen;
         my @pattern;
@@ -154,6 +188,10 @@ $irc->on(irc_privmsg => sub {
       if ( $match =~ /^source$/i ) {
         return $irc->write(PRIVMSG => $chan => 'My source is at https://github.com/jonisno/netgoth-anna and I\'m currently on the develop branch.');
       }
+
+			# This is hairy af, should add a TODO to do something about it.
+			#
+			# TODO: sort this shit out.
       if ( $match =~ /^bing$/i ) {
 				shift @cmds;
 				my $searchstring = join ' ', @cmds;
@@ -175,6 +213,8 @@ $irc->on(irc_privmsg => sub {
     }
 });
 
+# Whenever we join a channel we get updated info about all the nicks there.
+# Update the data and move on.
 $irc->on(irc_rpl_namreply => sub {
     my ($c,$raw) = @_;
     my @online = split / /, @{$raw->{params}}[3];
@@ -184,6 +224,7 @@ $irc->on(irc_rpl_namreply => sub {
   }
 );
 
+# Update user data whenever someone joins the channel.
 $irc->on(irc_join => sub {
     my ($c, $raw) = @_;
     my ($nick) = split /!/, $raw->{prefix};
@@ -192,6 +233,7 @@ $irc->on(irc_join => sub {
     $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', online_now => 't' });
 });
 
+# Update user data whenever someone parts the channel.
 $irc->on(irc_part => sub {
     my ($c, $raw) = @_;
     my ($nick) = split /!/, $raw->{prefix};
@@ -199,11 +241,14 @@ $irc->on(irc_part => sub {
     $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', online_now => 'f' });
 });
 
+
+# I don't even.
 $irc->on(error => sub {
     my ($c, $err) = @_;
     warn $err;
 });
 
+# Does what it says on the package, reconnect anywhere from 10-40 seconds after disconnect.
 sub _reconnect_in {
   return 10 + int rand 30;
 }

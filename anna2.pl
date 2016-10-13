@@ -11,8 +11,7 @@ use Anna::Model;
 use Config::General;
 use Net::Twitter::Lite::WithAPIv1_1;
 use DateTime;
-use DateTime::Format::Duration;
-use DateTime::Format::ISO8601;
+use Time::Seconds;
 
 my %config = Config::General->new('./conf/anna.conf')->getall;
 
@@ -24,13 +23,14 @@ state $db = Anna::Model->connect(
     pg_enable_utf8 => 1,
     RaiseError     => 1,
     PrintError     => 1,
-    PrintWarn      => 1
+    PrintWarn      => 1,
+		on_connect_do   => "set timezone to 'utc'"
   }
 );
 state $irc = Mojo::IRC->new(
-  nick => $config{nick},
-  user => $config{username},
-  name => $config{displayname},
+  nick   => $config{nick},
+  user   => $config{username},
+  name   => $config{displayname},
   server => "$config{server}"
 );
 state $ua      = Mojo::UserAgent->new;
@@ -53,19 +53,18 @@ sub on_connect {
 $irc->on(irc_privmsg => sub {
     my ($c, $raw) = @_;
     my ($nick, $host) = split /!/, $raw->{prefix};
-    my ($chan,$message) = @{$raw->{params}};
+    my ($chan, $message) = @{$raw->{params}};
 
 		# Just log all messages
 		$db->resultset('Log')->create({ nick => $nick, message => $message });
 
-		# The danger of uncommented code, this was probably for a good reason,
-		# but I don't know why.
+		# Let's not have $nick talking to itself
 		if (lc $chan eq lc $c->nick || lc $nick eq lc $c->nick) {
       return;
     }
 
 		# Update user record so we !seen works.
-    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', last_active => 'now()', online_now => 't' });
+    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()' });
 
 		# If twitter link, fetch data and show it.
 		# Should probably be moved out of here.
@@ -82,7 +81,7 @@ $irc->on(irc_privmsg => sub {
     }
 
 		# Same as above, fetching data about youtube urls.
-		if ($message =~ /(https?:\/\/(?:www\.)?(youtu\.be|youtube\.com).*)(?:\s|$)/i) {
+		if ($message =~ /(https?:\/\/(?:www|m)\.?(youtu\.be|youtube\.com).*)(?:\s|$)/i) {
 			my $parselink = Mojo::URL->new($1);
 			my $domain = $2;
 			my $id;
@@ -100,6 +99,17 @@ $irc->on(irc_privmsg => sub {
 			$h = sprintf('%02d', $h);
 			$m = sprintf('%02d', $m);
 			return $irc->write(PRIVMSG => $chan => "Title: $vid->{snippet}{title} [$h:$m]");
+		}
+
+		if($message =~ /^.*?(https?:\/\/.+?(?=\s|$))/) {
+			my $tx = $ua->get($1);
+			if($tx->success) {
+				my $og_title = $tx->res->dom->at('meta[property="og:title"]');
+				#TODO: make $nick fetch title of webpage.
+				my $title = $og_title ? $og_title->attr('content') : undef;
+				return unless $title;
+				return $irc->write(PRIVMSG => $chan => "[$title]");
+			}
 		}
 
 		# Sort out karma, this feels a bit yolo, but it works for now.
@@ -158,23 +168,14 @@ $irc->on(irc_privmsg => sub {
       if ( $match =~ /^seen$/i ) {
         return unless $cmds[1];
         my $user = $db->resultset('Users')->find({ nick => { ilike => $cmds[1] }});
-        return $irc->write(PRIVMSG => $chan => "Are you fucking stupid or something?") if $cmds[1] eq $c->nick;
+        return $irc->write(PRIVMSG => $chan => "Are you fucking stupid or something?") if lc $c->nick eq lc $cmds[1];
         return $irc->write(PRIVMSG => $chan => "$nick: I have never seen $cmds[1]") unless $user;
-        return $irc->write(PRIVMSG => $chan => "Oh, fuck off.") if $user->nick =~ /$nick/i;
+        return $irc->write(PRIVMSG => $chan => "Oh, fuck off.") if $user->nick eq $nick;
 
 				# Holy shit motherfucker. Better sort this out.
-        my $duration;
-        $user->online_now && $user->last_active ? $duration = DateTime->now - $user->last_active : $duration = DateTime->now - $user->last_seen;
-        my @pattern;
-        $duration->years == 1 ? push @pattern, '%Y year' : push @pattern, '%Y years' unless $duration->years == 0;
-        $duration->months == 1 ? push @pattern, '%m month' : push @pattern, '%m months' unless $duration->months == 0;
-        $duration->weeks == 1 ? push @pattern, '%m week' : push @pattern, '%m weeks' unless $duration->weeks == 0;
-        $duration->days == 1 ? push @pattern, '%e day' : push @pattern, '%e days' unless $duration->days == 0;
-        $duration->hours == 1 ? push @pattern,'%H hour' : push @pattern, '%H hours' unless $duration->hours == 0;
-        $duration->minutes == 1 ? push @pattern, '%M minute' : push @pattern, '%M minutes' unless $duration->minutes == 0;
-        $duration->seconds == 1 ? push @pattern, '%S second' : push @pattern, '%S seconds' unless $duration->seconds == 0;
-        my $dtf = DateTime::Format::Duration->new( pattern => join(', ', @pattern), normalize => 1 );
-        return $irc->write(PRIVMSG => $chan => sprintf('%s: %s was seen %s ago', $nick, $user->nick, $dtf->format_duration($duration)));
+        my $seconds = DateTime->now->subtract_datetime_absolute($user->last_seen);
+				my $duration = Time::Seconds->new($seconds->seconds)->pretty;
+        return $irc->write(PRIVMSG => $chan => sprintf('%s: %s was seen %s ago', $nick, $user->nick, $duration));
       }
 
       if ( $match =~ /^help$/i ) {
@@ -186,12 +187,13 @@ $irc->on(irc_privmsg => sub {
       }
 
       if ( $match =~ /^source$/i ) {
-        return $irc->write(PRIVMSG => $chan => 'My source is at https://github.com/jonisno/netgoth-anna and I\'m currently on the develop branch.');
+        return $irc->write(PRIVMSG => $chan => 'My source is at https://github.com/jonisno/netgoth-anna.');
       }
 
 			# This is hairy af, should add a TODO to do something about it.
 			#
 			# TODO: sort this shit out.
+			# Edit: cba, current bing search used is going to be phased out.
       if ( $match =~ /^bing$/i ) {
 				shift @cmds;
 				my $searchstring = join ' ', @cmds;
@@ -213,39 +215,15 @@ $irc->on(irc_privmsg => sub {
     }
 });
 
-# Whenever we join a channel we get updated info about all the nicks there.
-# Update the data and move on.
-$irc->on(irc_rpl_namreply => sub {
-    my ($c,$raw) = @_;
-    my @online = split / /, @{$raw->{params}}[3];
-    s/[@\+&]// for @online;
-    $db->resultset('Users')->update_all({ online_now => 'f' });
-    $db->resultset('Users')->find_or_create({ nick => $_ })->update({ nick => $_, last_seen => 'now()', online_now => 't' }) for @online;
-  }
-);
-
-# Update user data whenever someone joins the channel.
-$irc->on(irc_join => sub {
-    my ($c, $raw) = @_;
-    my ($nick) = split /!/, $raw->{prefix};
-    my ($chan) = @{$raw->{params}};
-    return if $nick eq $c->nick;
-    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', online_now => 't' });
+$irc->on(close => sub {
+		Mojo::IOLoop->timer(20 => sub {
+				$irc->connect(\&on_connect);
+		})
 });
 
-# Update user data whenever someone parts the channel.
-$irc->on(irc_part => sub {
-    my ($c, $raw) = @_;
-    my ($nick) = split /!/, $raw->{prefix};
-    my ($chan) = @{$raw->{params}};
-    $db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()', online_now => 'f' });
-});
-
-
-# I don't even.
 $irc->on(error => sub {
-    my ($c, $err) = @_;
-    warn $err;
+		my ($c, $err) = @_;
+		warn $err;
 });
 
 # Does what it says on the package, reconnect anywhere from 10-40 seconds after disconnect.

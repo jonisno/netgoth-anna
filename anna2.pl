@@ -46,8 +46,10 @@ sub on_connect {
 	my ($self, $error) = @_;
 	#Delay channel joins by two seconds.
 	Mojo::IOLoop->timer(2 => sub {
-			$irc->write(join => $config{chan});
-		});
+		for(@{$config{chan}}) {
+			$irc->write(join => $_);
+		}
+	});
 };
 
 $irc->on(irc_privmsg => sub {

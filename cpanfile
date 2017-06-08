@@ -1,4 +1,3 @@
-requires 'FindBin';
 requires 'Mojo::IRC';
 requires 'Mojolicious';
 requires 'Parse::IRC';

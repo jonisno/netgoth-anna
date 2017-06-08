@@ -12,6 +12,9 @@ use Config::General;
 use Net::Twitter::Lite::WithAPIv1_1;
 use DateTime;
 use Time::Seconds;
+use Data::Dump qw(dump);
+
+no strict 'refs';
 
 my %config = Config::General->new('./conf/anna.conf')->getall;
 
@@ -34,6 +37,8 @@ state $irc = Mojo::IRC->new(
 	server => "$config{server}"
 );
 state $ua      = Mojo::UserAgent->new;
+$ua->max_redirects(5);
+
 state $twitter = Net::Twitter::Lite::WithAPIv1_1->new(
 	consumer_key        => $config{twitter_key},
 	consumer_secret     => $config{twitter_secret},
@@ -121,8 +126,9 @@ $irc->on(irc_privmsg => sub {
 		my $tx = $ua->get($1);
 		if($tx->success) {
 			my $og_title = $tx->res->dom->at('meta[property="og:title"]');
+			my $ht_title = $tx->res->dom->at('title');
 			#TODO: make $nick fetch title of webpage.
-			my $title = $og_title ? $og_title->attr('content') : undef;
+			my $title = $og_title ? $og_title->attr('content') : ($ht_title ? $ht_title->all_text : undef);
 			return unless $title;
 			return $irc->write(PRIVMSG => $chan => "[$title]");
 		}

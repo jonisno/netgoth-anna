@@ -9,3 +9,4 @@ requires 'DateTime::Format::ISO8601';
 requires 'DBIx::Class';
 requires 'DBI';
 required 'DBD::Pg';
+requires 'Data::Dump';

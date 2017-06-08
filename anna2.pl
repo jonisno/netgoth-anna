@@ -68,9 +68,17 @@ $irc->on(irc_privmsg => sub {
 	# Update user record so we !seen works.
 	$db->resultset('Users')->find_or_create({ nick => $nick })->update({ last_seen => 'now()' });
 
+	if ($message =~ m/thanks anna/i) {
+		$irc->write(PRIVMSG => $chan => "You're welcome, $nick!");
+	}
+
+	if ($message =~ m/anna.*?broken/i) {
+		$irc->write(PRIVMSG => $chan => "Maybe, maybe not, maybe go fuck yourself $nick.");
+	}
+
 	# If twitter link, fetch data and show it.
 	# Should probably be moved out of here.
-	if( $message =~ /https:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/ ) {
+	if( $message =~ /https?:\/\/twitter.com\/\w+\/status(?:es)?\/(\d+)/ ) {
 		my $status = $twitter->show_status($1);
 		my $tweet = $status->{text};
 		$tweet =~ s/\R+/\ /g;
@@ -83,7 +91,7 @@ $irc->on(irc_privmsg => sub {
 	}
 
 	# Same as above, fetching data about youtube urls.
-	if ($message =~ /(https?:\/\/(?:www|m)\.?(youtu\.be|youtube\.com).*)(?:\s|$)/i) {
+	if ($message =~ /(https?:\/\/(?:www|m)?\.?(youtu\.be|youtube\.com).*)(?:\s|$)/i) {
 		my $parselink = Mojo::URL->new($1);
 		my $domain = $2;
 		my $id;
@@ -97,10 +105,16 @@ $irc->on(irc_privmsg => sub {
 		my $json = $ua->get($url)->res->json;
 		return unless $json;
 		my $vid = shift @{$json->{items}};
-		my ($h, $m) = ($vid->{contentDetails}{duration} =~ /(\d+)M(\d+)S/m);
-		$h = sprintf('%02d', $h);
-		$m = sprintf('%02d', $m);
-		return $irc->write(PRIVMSG => $chan => "Title: $vid->{snippet}{title} [$h:$m]");
+		my @parts = ($vid->{contentDetails}{duration} =~ /PT(\d+H)?(\d+M)?(\d+S)?/m);
+		my $ts = join ':', (
+			map {
+				sprintf(
+					'%02d',
+					defined $_ ? substr( $_, 0, length( $_ ) -1 ) : 0
+				)
+			} @parts
+		);
+		return $irc->write(PRIVMSG => $chan => "Title: $vid->{snippet}{title} [$ts]");
 	}
 
 	if($message =~ /^.*?(https?:\/\/.+?(?=\s|$))/) {
